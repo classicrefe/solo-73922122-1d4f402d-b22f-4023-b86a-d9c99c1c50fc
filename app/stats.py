@@ -1,7 +1,9 @@
 """Analysis queries.
 
 Everything here reads only the per-round summary tables (``orig_rounds`` /
-``corr_rounds``) and scalar ``meta`` totals — no per-household detail.
+``corr_rounds``), the per-bucket ``batch_summary`` table and scalar ``meta``
+totals — no per-household detail.  Buckets (batches plus the manual bucket)
+are aggregated per round.
 
 For each bootstrap round r the weighted mean difference is
 
@@ -69,15 +71,23 @@ def analyze(conn: sqlite3.Connection) -> dict:
 
     result["unweighted_diff"] = corr_sum / corr_n - orig_sum / orig_n
 
+    # Buckets are summed per round; analysis stays confined to summary tables.
     rows = conn.execute(
         """
         SELECT o.round_index       AS round_index,
-               o.weight_total      AS ow,
-               o.weighted_sum      AS ows,
-               c.weight_total      AS cw,
-               c.weighted_sum      AS cws
+               SUM(o.weight_total) AS ow,
+               SUM(o.weighted_sum) AS ows,
+               c.cw                AS cw,
+               c.cws               AS cws
         FROM orig_rounds o
-        JOIN corr_rounds c ON c.round_index = o.round_index
+        JOIN (
+            SELECT round_index,
+                   SUM(weight_total) AS cw,
+                   SUM(weighted_sum) AS cws
+            FROM corr_rounds
+            GROUP BY round_index
+        ) c ON c.round_index = o.round_index
+        GROUP BY o.round_index
         ORDER BY o.round_index
         """
     ).fetchall()
